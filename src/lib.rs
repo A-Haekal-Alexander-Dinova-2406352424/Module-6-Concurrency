@@ -8,6 +8,9 @@ pub struct ThreadPool {
     sender: Option<mpsc::Sender<Message>>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct ThreadPoolBuildError;
+
 type Job = Box<dyn FnOnce() + Send + 'static>;
 
 enum Message {
@@ -16,8 +19,10 @@ enum Message {
 }
 
 impl ThreadPool {
-    pub fn new(size: usize) -> Self {
-        assert!(size > 0, "Thread pool size must be greater than zero.");
+    pub fn build(size: usize) -> Result<Self, ThreadPoolBuildError> {
+        if size == 0 {
+            return Err(ThreadPoolBuildError);
+        }
 
         let (sender, receiver) = mpsc::channel();
         let receiver = Arc::new(Mutex::new(receiver));
@@ -27,10 +32,10 @@ impl ThreadPool {
             workers.push(Worker::new(id, Arc::clone(&receiver)));
         }
 
-        Self {
+        Ok(Self {
             workers,
             sender: Some(sender),
-        }
+        })
     }
 
     pub fn execute<F>(&self, f: F)
@@ -46,6 +51,14 @@ impl ThreadPool {
             .unwrap();
     }
 }
+
+impl std::fmt::Display for ThreadPoolBuildError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Thread pool size must be greater than zero.")
+    }
+}
+
+impl std::error::Error for ThreadPoolBuildError {}
 
 impl Drop for ThreadPool {
     fn drop(&mut self) {
@@ -94,18 +107,17 @@ impl Worker {
 
 #[cfg(test)]
 mod tests {
-    use super::ThreadPool;
+    use super::{ThreadPool, ThreadPoolBuildError};
     use std::sync::mpsc;
 
     #[test]
-    #[should_panic(expected = "Thread pool size must be greater than zero.")]
-    fn thread_pool_requires_positive_size() {
-        ThreadPool::new(0);
+    fn thread_pool_build_requires_positive_size() {
+        assert!(matches!(ThreadPool::build(0), Err(ThreadPoolBuildError)));
     }
 
     #[test]
     fn thread_pool_executes_all_jobs() {
-        let pool = ThreadPool::new(2);
+        let pool = ThreadPool::build(2).unwrap();
         let (sender, receiver) = mpsc::channel();
 
         for value in 0..4 {
